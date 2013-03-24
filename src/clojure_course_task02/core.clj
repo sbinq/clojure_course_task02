@@ -20,9 +20,6 @@
     (fn [^File file]
       (not (nil? (re-matches pattern (.getName file)))))))
 
-;;; FIXME: had hangup issue on large inputs - probably because of futures created inside
-;;; FIXME: the same futures running in the same thread pool;
-;;; FIXME: see also http://www.gossamer-threads.com/lists/lucene/java-user/146567?do=post_view_threaded#146567
 (defn find-files-mt [file-filter root]
   "Uses multiple workers in different threads synchronizing state with refs.
    Main thread uses java-style wait/notify to check if everything is finished
