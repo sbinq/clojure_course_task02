@@ -20,23 +20,6 @@
     (fn [^File file]
       (not (nil? (re-matches pattern (.getName file)))))))
 
-(defn find-files-simple [file-filter ^File root]
-  "Does not use any mutable state and multithreading, and actually works faster"
-  (let [[dirs files] (dirs-and-files root)]
-    (concat (filter file-filter files)
-            (mapcat #(find-files-simple file-filter %) dirs))))
-
-;;; FIXME: this creates extremaly many threads on large inputs
-;;; FIXME: last seen through jvisualvm value was about 30 000
-;;; FIXME: leads to total system hangup/out of memory/swapping
-;;; FIXME: on moderate size inputs - suffers from the same issue
-;;; FIXME: as explicit-thread-pool solution below
-(defn find-files-pmap [file-filter ^File root]
-  (let [[dirs files] (dirs-and-files root)]
-    (concat (filter file-filter files)
-            (reduce concat
-                    (pmap #(find-files-pmap file-filter %) dirs)))))
-
 ;;; FIXME: had hangup issue on large inputs - probably because of futures created inside
 ;;; FIXME: the same futures running in the same thread pool;
 ;;; FIXME: see also http://www.gossamer-threads.com/lists/lucene/java-user/146567?do=post_view_threaded#146567
@@ -78,10 +61,7 @@
   "Implements searching for a file using his name as a regexp."
   (let [file-filter (make-regex-file-filter file-name)
         root (File. path)
-        ;files (find-files-simple file-filter root)
-        files (find-files-mt file-filter root)
-        ;files (find-files-pmap file-filter root)
-        ]
+        files (find-files-mt file-filter root)]
     (map (fn [^File file] (.getName file)) files)))
 
 (defn usage []
