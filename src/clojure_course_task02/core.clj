@@ -28,6 +28,8 @@
              (let [matching (doall (filter file-filter files))] ; doing filter outside of transaction to reduce overlapping
                (dosync
                 (alter acc conj matching)))) ; concat fails with stackoverflow here on large inputs, so using conj+flatten
+           ;; as with ref, actually using sequence representing each directory content
+           ;; only to satisfy 'subdirectory parallelism' requirement - otherwise things could be simpler
            (tree-seq identity
                      (fn [[dirs files]] (map dirs-and-files dirs))
                      (dirs-and-files root))))
