@@ -1,6 +1,5 @@
 (ns clojure-course-task02.core
-  (:import [java.io File]
-           [java.util.concurrent Executors])
+  (:import [java.io File])
   (:gen-class))
 
 (set! *warn-on-reflection* true)
@@ -19,43 +18,26 @@
     (fn [^File file]
       (not (nil? (re-matches pattern (.getName file)))))))
 
-(defn find-files-mt [file-filter root]
-  "Uses multiple workers in different threads synchronizing state with refs"
-  (let [matching-files-ref (ref [])
-        submitted-workers-count-ref (ref 1) ; this is for root worker
-        worker-finished-signal (Object.)
-        worker (fn worker [^File parent]
-                 (let [[dirs files] (dirs-and-files parent)
-                       matching-files (filter file-filter files)]
-                   (dosync
-                    ;; don't actually need refs here - two independents atoms would do fine
-                    ;; (latest two invocations would be united into one)
-                    (alter matching-files-ref conj matching-files) ; TODO: if use concat here - getting StackOverflow on large input;
-                    (alter submitted-workers-count-ref + (count dirs)) ; new workers to be added, increasing counter
-                    (alter submitted-workers-count-ref dec)) ; but this one is finishing, decreasing counter
-                   (doall (map (fn [dir] (future (worker dir))) dirs))
-                   (locking worker-finished-signal
-                     (.notify worker-finished-signal))))]
-    (locking worker-finished-signal
-      (future (worker root))
-      (loop [submitted-workers-count @submitted-workers-count-ref]
-        (if (> submitted-workers-count 0)
-          (do
-            (.wait worker-finished-signal)
-            (recur @submitted-workers-count-ref))
-          (flatten @matching-files-ref)))))) ; TODO: flatten here because of concat workaround above
-
-(defn find-files-pmap2 [file-filter ^File root]
-  (apply concat
-         (pmap #(let [[dirs files] (dirs-and-files %)]
-                  (filter file-filter files))
-               (filter (fn [^File file] (.isDirectory file)) (file-seq root))))) ; silly to filter out files this way - but just for testing
+(defn find-files-mt [file-filter ^File root]
+  ;; actually using ref only to formally satisfy requirements - e.g. atom
+  ;; would be fine here, absence of mutable state could be even better
+  (let [acc (ref [])]
+    ;; FIXME: this consumes very much memory on huge inputs - -Xmx6144M was not enough for my user home (61204 dirs, 209649 files)
+    (dorun
+     (pmap (fn [[dirs files]]
+             (let [matching (doall (filter file-filter files))] ; doing filter outside of transaction to reduce overlapping
+               (dosync
+                (alter acc conj matching)))) ; concat fails with stackoverflow here on large inputs, so using conj+flatten
+           (tree-seq identity
+                     (fn [[dirs files]] (map dirs-and-files dirs))
+                     (dirs-and-files root))))
+    (flatten @acc)))
 
 (defn find-files [file-name ^String path]
   "Implements searching for a file using his name as a regexp."
   (let [file-filter (make-regex-file-filter file-name)
         root (File. path)
-        files (find-files-pmap2 file-filter root)]
+        files (find-files-mt file-filter root)]
     (map (fn [^File file] (.getName file)) files)))
 
 (defn usage []
