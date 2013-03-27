@@ -21,6 +21,9 @@
 
 (def thread-names (atom #{}))       ; keeping track of threads where solution was run just for info
 (defn find-files-r [file-filter root]
+  "Find files matching given filter fn starting from given root directory.
+   Uses clojure reducers (and java fork/join framework behind the scenes)
+   seems like achieving pretty good parallelism - http://i.imgur.com/9DvPphM.png "
   (let [[dirs files] (dirs-and-files root)
         matching (doall (filter file-filter files))
         child-matching (r/fold 1 r/cat
