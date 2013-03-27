@@ -5,52 +5,35 @@
 
 (set! *warn-on-reflection* true)
 
-(defn dirs-and-files [^File parent]
+(defn dirs-and-files [parent]
   "List of two vectors - directories and files in given directory
    (any of them can be nil if there are no files/directories inside)"
-  (let [children (.listFiles parent)
-        {dirs true, files false} (group-by (fn [^File file] (.isDirectory file)) children)]
+  (let [children (.listFiles ^File parent)
+        {dirs true, files false} (group-by #(.isDirectory ^File %) children)]
     (list dirs files)))
 
 (defn make-regex-file-filter [regex-str]
   "Returns function which takes file as argument and returns boolean
    indicating whether it matches or not"
   (let [pattern (re-pattern regex-str)]
-    (fn [^File file]
-      (not (nil? (re-matches pattern (.getName file)))))))
+    (fn [file]
+      (not (nil? (re-matches pattern (.getName ^File file)))))))
 
-(defn find-files-mt [file-filter ^File root]
-  ;; actually using ref only to formally satisfy requirements - e.g. atom
-  ;; would be fine here, absence of mutable state could be even better
-  (let [acc (ref [])]
-    ;; FIXME: this consumes very much memory on huge inputs - -Xmx6144M was not enough for my user home (61204 dirs, 209649 files)
-    (dorun
-     (pmap (fn [[dirs files]]
-             (let [matching (doall (filter file-filter files))] ; doing filter outside of transaction to reduce overlapping
-               (dosync
-                (alter acc conj matching)))) ; concat fails with stackoverflow here on large inputs, so using conj+flatten
-           ;; as with ref, actually using sequence representing each directory content
-           ;; only to satisfy 'subdirectory parallelism' requirement - otherwise things could be simpler
-           (tree-seq identity
-                     (fn [[dirs files]] (map dirs-and-files dirs))
-                     (dirs-and-files root))))
-    (flatten @acc)))
-
-(def thread-names (atom #{}))       ; keeping track of threads where next solution was run just for info
-(defn find-files-r [file-filter ^File root]
+(def thread-names (atom #{}))       ; keeping track of threads where solution was run just for info
+(defn find-files-r [file-filter root]
   (let [[dirs files] (dirs-and-files root)
         matching (doall (filter file-filter files))
-        _ (swap! thread-names conj (.getName (Thread/currentThread)))
         child-matching (r/fold 1 r/cat
-                               (fn ([acc dir] (r/cat acc (find-files-r file-filter dir))))
+                               (fn [acc dir] (r/cat acc (find-files-r file-filter dir)))
                                dirs)]
+    (swap! thread-names conj (.getName (Thread/currentThread))) ; see comment above
     (r/cat matching child-matching)))
 
-(defn find-files [file-name ^String path]
+(defn find-files [file-name path]
   "Implements searching for a file using his name as a regexp."
   (let [file-filter (make-regex-file-filter file-name)
-        files (doall (seq (find-files-r file-filter (File. path))))]
-    (map (fn [^File file] (.getName file)) files)))
+        files (doall (seq (find-files-r file-filter (File. ^String path))))]
+    (map #(.getName ^File %) files)))
 
 (defn usage []
   (println "Usage: $ run.sh file_name path"))
@@ -62,6 +45,5 @@
     (do
       (println "Searching for " file-name " in " path "...")
       (dorun (map println (find-files file-name path)))
-      (println "Finished with" (count (Thread/getAllStackTraces)) "threads")
       (println "Reducers-based function was executing in" @thread-names)
       (shutdown-agents))))
