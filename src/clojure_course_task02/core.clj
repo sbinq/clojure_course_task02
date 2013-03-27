@@ -1,4 +1,5 @@
 (ns clojure-course-task02.core
+  (:require [clojure.core.reducers :as r])
   (:import [java.io File])
   (:gen-class))
 
@@ -35,11 +36,20 @@
                      (dirs-and-files root))))
     (flatten @acc)))
 
+(def thread-names (atom #{}))       ; keeping track of threads where next solution was run just for info
+(defn find-files-r [file-filter ^File root]
+  (let [[dirs files] (dirs-and-files root)
+        matching (doall (filter file-filter files))
+        _ (swap! thread-names conj (.getName (Thread/currentThread)))
+        child-matching (r/fold 1 r/cat
+                               (fn ([acc dir] (r/cat acc (find-files-r file-filter dir))))
+                               dirs)]
+    (r/cat matching child-matching)))
+
 (defn find-files [file-name ^String path]
   "Implements searching for a file using his name as a regexp."
   (let [file-filter (make-regex-file-filter file-name)
-        root (File. path)
-        files (find-files-mt file-filter root)]
+        files (doall (seq (find-files-r file-filter (File. path))))]
     (map (fn [^File file] (.getName file)) files)))
 
 (defn usage []
@@ -53,4 +63,5 @@
       (println "Searching for " file-name " in " path "...")
       (dorun (map println (find-files file-name path)))
       (println "Finished with" (count (Thread/getAllStackTraces)) "threads")
+      (println "Reducers-based function was executing in" @thread-names)
       (shutdown-agents))))
